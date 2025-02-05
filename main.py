@@ -8,7 +8,7 @@ from few_shot import FewShotPosts
 from post_generator import generate_post
 from utils.share_utils import share_via_email, share_on_linkedin, share_on_x, copy_to_clipboard
 import requests
-import pycountry
+# import pycountry
 import base64
 from io import BytesIO
 from fpdf import FPDF
