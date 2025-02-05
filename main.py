@@ -1,6 +1,6 @@
 import urllib
 import streamlit as st
-from streamlit_lottie import st_lottie
+# from streamlit_lottie import st_lottie
 from utils.lottie_loader import load_lottie_animation
 from utils.language_utils import get_all_languages
 from utils.file_utils import download_file
