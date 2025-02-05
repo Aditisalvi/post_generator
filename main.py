@@ -1,8 +1,12 @@
 import urllib
 import streamlit as st
 from streamlit_lottie import st_lottie
+from utils.lottie_loader import load_lottie_animation
+from utils.language_utils import get_all_languages
+from utils.file_utils import download_file
 from few_shot import FewShotPosts
 from post_generator import generate_post
+from utils.share_utils import share_via_email, share_on_linkedin, share_on_x, copy_to_clipboard
 import requests
 import pycountry
 import base64
@@ -15,26 +19,15 @@ from backend import MongoDBBackend  # Importing backend methods
 # Options for length
 length_options = ["Short", "Medium", "Long"]
 
-# Function to get all languages using pycountry
-def get_all_languages():
-    return sorted(
-        [(language.name, language.alpha_2) for language in pycountry.languages if hasattr(language, "alpha_2")],
-        key=lambda x: x[0]  # Sort by display name
-    )
+# Function to generate a unique and relevant title
+def generate_title(topic, length, language):
+    length_descriptions = {
+        "Short": "A concise",
+        "Medium": "An insightful",
+        "Long": "An in-depth"
+    }
+    return f"{length_descriptions[length]} post about {topic} in {language}"
 
-# Function to load Lottie animation from URL or file
-def load_lottie_animation(url):
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        return None
-
-# Function to download content as a file
-def download_file(content, filename):
-    b64 = base64.b64encode(content.encode()).decode()
-    href = f'<a href="data:file/txt;base64,{b64}" download="{filename}">Download {filename}</a>'
-    st.markdown(href, unsafe_allow_html=True)
 
 # Function to create a PDF file with Unicode font
 def create_pdf(title, content):
@@ -50,41 +43,6 @@ def create_pdf(title, content):
     pdf_output.seek(0)  # Reset stream position
     return pdf_output
 
-# Function to copy content to clipboard
-def copy_to_clipboard(content):
-    st.code(content)
-    st.success("Copied to clipboard!")
-
-# Function to share via email (opens Gmail with prefilled content)
-def share_via_email(content, title):
-    subject = title
-    body = content
-    mailto_link = f"https://mail.google.com/mail/?view=cm&fs=1&su={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
-    webbrowser.open(mailto_link)
-
-# Function to share on LinkedIn (prefills title and content)
-def share_on_linkedin(content, title):
-    linkedin_url = "https://www.linkedin.com/shareArticle"
-    params = {
-        "mini": "true",
-        "url": "http://example.com",  # Replace with your app's URL
-        "title": title,
-        "summary": content
-    }
-    query_string = urllib.parse.urlencode(params)
-    full_url = f"{linkedin_url}?{query_string}"
-    webbrowser.open(full_url)
-
-# Function to share on X (Twitter)
-def share_on_x(content, title):
-    x_url = "https://twitter.com/intent/tweet"
-    params = {
-        "text": f"{title}\n{content}"
-    }
-    query_string = urllib.parse.urlencode(params)
-    full_url = f"{x_url}?{query_string}"
-    webbrowser.open(full_url)
-
 # Initialize backend instance
 backend = MongoDBBackend(
     username="aditisalvi013",
@@ -93,6 +51,175 @@ backend = MongoDBBackend(
     collection_name="my_posts"
 )
 
+st.set_page_config(page_title="KUKI AI", layout="wide")
+
+# Custom styles for enhanced layout
+st.markdown("""
+    <style>
+    .sidebar-content {
+        overflow-y: auto;
+        max-height: 90vh;
+    }
+
+    .clickable-topic {
+        cursor: pointer;
+        color: blue;
+        text-decoration: underline;
+    }
+    
+    footer {
+        font-size: 20px;
+        text-align: center;
+        padding: 10px;
+        margin-top: 20px;
+        color: #4BFFFF;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Sidebar
+with st.sidebar:
+    # Sidebar header
+    st.selectbox("Select Model",
+                 ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama-guard-3-8b", "llama3-70b-8192",
+                  "llama3-8b-8192", "mixtral-8x7b-32768"], key="model_select")
+    st.markdown("---")
+
+    st.text_input("🔍 Search", placeholder="")
+    st.markdown("---")
+    st.header("History")
+    st.markdown("---")
+
+    # Fetch all post titles from the database
+    posts = backend.get_all_posts()  # Fetch all posts from MongoDB
+    if posts:
+        for post in posts:
+            title = post.get('title', 'Untitled')  # Safely handle missing title
+            post_id = str(post.get('_id', 'unknown'))  # Safely handle missing _id
+
+            # Skip posts without a valid _id
+            if post_id == 'unknown':
+                st.warning(f"Skipping post with missing ID: {title}")
+                continue
+
+            # Display post title with rename and delete options
+            with st.container():
+                # st.button(f"**{title}**", key=f"topic_{post_id}")  # Display the title
+                if st.button(f"**{title}**", key=f"topic_{post_id}"):
+                    st.session_state["selected_topic"] = title
+                    st.session_state["selected_post_content"] = post['content']  # Store content for display
+
+                col2, col3 = st.columns(2)
+
+
+                if col2.button("✏️ Rename", key=f"rename_{post_id}"):
+                    new_title = st.text_input("Enter new title", value=title, key=f"new_title_{post_id}")
+                    if st.button("Save", key=f"save_rename_{post_id}"):
+                        print(f"Attempting to update post: {post_id}, New Title: {new_title}")
+                        if backend.update_post_title(post_id, new_title):
+                            # Update the title in session state after backend update
+                            for p in st.session_state.posts:
+                                if p["_id"] == post_id:
+                                    p["title"] = new_title
+                            st.success(f"Post '{title}' updated to '{new_title}'!")
+                        else:
+                            st.error(f"Failed to update post '{title}'.")
+
+                # Delete Button
+                if col3.button("🗑️ Delete", key=f"delete_{post_id}"):
+                    backend.delete_post(post_id)  # Backend method to delete
+                    st.success(f"Post '{title}' deleted successfully!")
+                    st.rerun()  # Reload to reflect changes
+            st.markdown("---")
+    else:
+        st.info("No saved posts found.")
+        st.markdown("---")
+
+cat_animation_url = "https://lottie.host/fbaf127e-e6d0-41a0-8942-76e8216236d1/jtqrNoFPYx.json"
+cat_animation = load_lottie_animation(cat_animation_url)
+
+cols1, cols2, cols3 = st.columns([6, 1, 1])
+with cols1:
+    st.markdown("")
+with cols2:
+    if st.button("📝 New Post"):
+        st.rerun()
+with cols3:
+    if st.button("🤖 Account"):
+        st.success("Logged out successfully!")
+
+co1, co2, co3 = st.columns([3, 1.5, 3])
+with co1:
+    st.markdown("")
+with co2:
+    if cat_animation:
+        st_lottie(cat_animation, height=150, width=190, loop=True, quality="high")
+        st.title("&nbsp;&nbsp;&nbsp;KUKI AI")
+    else:
+        st.error("Failed to load animation. Please check the URL.")
+with co3:
+    st.markdown("")
+
+# Set the background image
+bg_img = '''
+<style>
+[data-testid="stAppViewContainer"] {
+background-image: url("https://images.unsplash.com/photo-1498116069452-debf99cb30f0?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D");
+background-size: cover;
+background-repeat: no-repeat;
+background-attachment: local;
+}
+
+</style>
+'''
+st.markdown(bg_img, unsafe_allow_html=True)
+
+# Display selected post if a topic is selected
+if "selected_topic" in st.session_state:
+    st.subheader(f"Selected Topic: {st.session_state['selected_topic']}")
+    selected_title = st.session_state['selected_topic']
+    selected_post = st.session_state.get("selected_post_content", "No content available")
+    st.write(st.session_state.get("selected_post_content", "No content available"))
+    st.markdown("---")
+
+    st.subheader("Share Post")
+    share_options = st.selectbox(
+        "Choose sharing option:",
+        ["Select", "Text File", "PDF File", "HTML File", "MD File", "Copy to Clipboard", "Share via Email",
+         "Share on LinkedIn", "Share on X"], key={selected_title}
+    )
+
+    if share_options == "Text File":
+        download_file(f"{selected_title}\n\n{selected_post}", f"{selected_title}_post.txt")
+    elif share_options == "PDF File":
+        pdf_content = create_pdf(selected_title, selected_post)
+        st.download_button(
+            label="Download PDF",
+            data=pdf_content,
+            file_name=f"{selected_title}_post.pdf",
+            mime="application/pdf"
+        )
+    elif share_options == "HTML File":
+        html_content = f"<html><body><h2>{selected_title}</h2><p>{selected_post}</p></body></html>"
+        download_file(html_content, f"{selected_title}_post.html")
+    elif share_options == "MD File":
+        markdown_content = f"# {selected_title}\n\n{selected_post}"
+        download_file(markdown_content, f"{selected_title}_post.md")
+    elif share_options == "Copy to Clipboard":
+        copy_to_clipboard(f"{selected_title}\n\n{selected_post}")
+    elif share_options == "Share via Email":
+        share_via_email(f"{selected_title}\n\n{selected_post}", selected_title)
+    elif share_options == "Share on LinkedIn":
+        share_on_linkedin(selected_post, selected_title)
+    elif share_options == "Share on X":
+        share_on_x(selected_post, selected_title)
+
+    st.markdown("---")
+    st.markdown("")
+    st.markdown("")
+    st.markdown("")
+    st.markdown("")
+
 # Main app layout
 def main():
     if "post_title" not in st.session_state:
@@ -100,7 +227,7 @@ def main():
     if "generated_post" not in st.session_state:
         st.session_state.generated_post = ""
 
-    st.subheader("LinkedIn Post Generator")
+    st.title("Post Generator")
 
     # Create three columns for the dropdowns
     col1, col2, col3 = st.columns(3)
@@ -129,7 +256,7 @@ def main():
         generated_post = generate_post(selected_length, language_code, selected_tag)
 
         # Create title for the post
-        title = f"An Insightful Post on {selected_tag}"
+        title = generate_title(selected_tag, selected_length, selected_language)
 
         # Store generated post and title in session state
         st.session_state.generated_post = generated_post
@@ -153,7 +280,7 @@ def main():
         share_option = st.selectbox(
             "Choose sharing option:",
             ["Select", "Text File", "PDF File", "HTML File", "MD File", "Copy to Clipboard", "Share via Email",
-             "Share on LinkedIn", "Share on X"]
+             "Share on LinkedIn", "Share on X"], key=title
         )
 
         if share_option == "Text File":
@@ -182,44 +309,40 @@ def main():
             share_on_x(post, title)
 
     # List saved posts
-    st.markdown("---")
-    st.subheader("View Saved Posts")
-    if st.button("Load Saved Posts"):
-        posts = backend.get_all_posts()
-        if posts:
-            for post in posts:
-                st.markdown(f"### {post['title']}")
-                st.markdown(post['content'])
-                st.markdown(
-                    f"**Tags:** {post['tags']} | **Length:** {post['length']} | **Language:** {post['language']}")
-                st.markdown("---")
-        else:
-            st.info("No saved posts found.")
+    # st.markdown("---")
+    # st.subheader("View Saved Posts")
+    # if st.button("Load Saved Posts"):
+    #     posts = backend.get_all_posts()
+    #     if posts:
+    #         for post in posts:
+    #             st.markdown(f"### {post['title']}")
+    #             st.markdown(post['content'])
+    #             st.markdown(
+    #                 f"**Tags:** {post['tags']} | **Length:** {post['length']} | **Language:** {post['language']}")
+    #             st.markdown("---")
+    #     else:
+    #         st.info("No saved posts found.")
+    #
+    # st.markdown("---")
 
-    st.markdown("---")
+    # st.subheader("Delete Post")
+    # delete_title = st.text_input("Enter the title of the post to delete")
+    # if st.button("Delete Post"):
+    #     if delete_title:
+    #         deleted_count = backend.delete_post(delete_title)
+    #         if deleted_count > 0:
+    #             st.success(f"Post '{delete_title}' deleted successfully!")
+    #         else:
+    #             st.error(f"No post found with the title '{delete_title}'.")
+    #     else:
+    #         st.error("Please enter a title.")
 
-    st.subheader("Delete Post")
-    delete_title = st.text_input("Enter the title of the post to delete")
-    if st.button("Delete Post"):
-        if delete_title:
-            deleted_count = backend.delete_post(delete_title)
-            if deleted_count > 0:
-                st.success(f"Post '{delete_title}' deleted successfully!")
-            else:
-                st.error(f"No post found with the title '{delete_title}'.")
-        else:
-            st.error("Please enter a title.")
-
-    # Load and display Lottie animation
-    st.markdown("---")  # Separator line
-    st.subheader("Enjoy this cute cat animation!")
-    cat_animation_url = "https://lottie.host/c39564c8-927a-4efa-9542-24b438af4027/exUCllbPKa.json"  # Replace with your animation URL
-    cat_animation = load_lottie_animation(cat_animation_url)
-
-    if cat_animation:
-        st_lottie(cat_animation, height=300, width=500, loop=True)
-    else:
-        st.error("Failed to load animation. Please check the URL.")
+    # Footer
+    st.markdown("""
+        <footer>
+            Built with ❤️ by Aditi Salvi
+        </footer>
+    """, unsafe_allow_html=True)
 
 # Run the app
 if __name__ == "__main__":

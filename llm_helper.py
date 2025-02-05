@@ -7,8 +7,8 @@ llm = ChatGroq(groq_api_key=os.getenv("GROQ_API_KEY"), model_name="Llama-3.3-70b
 
 
 if __name__ == "__main__":
-    response = llm.invoke("Two most important ingredient in samosa are ")
-    print(response.content)
+    response = llm.invoke("Meow")
+
 
 
 

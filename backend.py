@@ -1,6 +1,7 @@
 import pymongo
 import urllib.parse
-
+from pymongo import MongoClient
+from bson.objectid import ObjectId
 
 class MongoDBBackend:
     def __init__(self, username, password, db_name, collection_name, cluster_url="cluster13.wiqb1.mongodb.net"):
@@ -46,19 +47,20 @@ class MongoDBBackend:
         return result.inserted_id
 
     def get_all_posts(self):
-        """
-        Retrieve all saved posts from the database.
+        return list(self.collection.find())  # Ensures all fields, including _id, are fetched
 
-        :return: List of posts
-        """
-        return list(self.collection.find({}, {"_id": 0}))
-
-    def delete_post(self, title):
-        """
-        Delete a post by title.
-
-        :param title: Title of the post to delete
-        :return: Deletion result
-        """
-        result = self.collection.delete_one({"title": title})
+    def delete_post(self, post_id):
+        from bson.objectid import ObjectId
+        result = self.collection.delete_one({"_id": ObjectId(post_id)})
         return result.deleted_count
+
+    def get_all_topics(self):
+        topics = self.collection.distinct("tags")
+        return topics
+
+    def update_post_title(self, post_id, new_title):
+        if post_id in self.collection:
+            self.collection[post_id]["title"] = new_title
+            return True
+        return False
+
